@@ -1,42 +1,37 @@
-name: GLaDOS Auto Checkin
+name: GLaDOS Multi-Account Checkin
 
 on:
   schedule:
-    - cron: '0 8 * * *'  # UTC时间8点（北京时间16点）
+    - cron: "0 16 * * *"   # 北京时间 00:00（UTC+8）
   workflow_dispatch:
 
 jobs:
-  auto-checkin:
+  checkin:
     runs-on: ubuntu-latest
-    environment: production
-    
+
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
+      - name: Checkout repo
+        uses: actions/checkout@v4
 
-    - name: Setup Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: "3.12"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
 
-    - name: Install dependencies
-      run:  pip install requests
+      - name: Install dependencies
+        run: |
+          pip install requests
 
-    - name: Run checkin
-      env:
-        GLADOS_EMAIL: ${{ secrets.GLADOS_EMAIL }}
-        GLADOS_COOKIE: ${{ secrets.GLADOS_COOKIE }}
-        GLADOS_EMAIL2: ${{ secrets.GLADOS_EMAIL2 }}
-        GLADOS_COOKIE2: ${{ secrets.GLADOS_COOKIE2 }}
-        TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-        TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-      run: python glados_checkin.py
+      - name: Run GLaDOS Checkin
+        env:
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
 
-  keepalive-workflow:
-    name: Keepalive Workflow
-    if: ${{ always() }}
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-    steps:
-      - uses: liskin/gh-workflow-keepalive@v1
+          GLADOS_EMAIL_1: ${{ secrets.GLADOS_EMAIL_1 }}
+          GLADOS_COOKIE_1: ${{ secrets.GLADOS_COOKIE_1 }}
+
+          GLADOS_EMAIL_2: ${{ secrets.GLADOS_EMAIL_2 }}
+          GLADOS_COOKIE_2: ${{ secrets.GLADOS_COOKIE_2 }}
+
+          # 想加第3、4个账号，继续往下写即可
+        run: python glados.py
