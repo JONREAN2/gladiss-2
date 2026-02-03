@@ -67,25 +67,46 @@ class GLaDOSChecker:
         days = r.json().get("data", {}).get("leftDays", 0)
         return f"剩余 {float(days):.1f} 天 🗓️"
 
-    def notify(self, email, checkin, status):
-        text = (
-            f"🕒 {self._now()}\n"
-            f"📧 {email}\n\n"
-            f"🔔 签到结果：{checkin}\n"
-            f"📊 账户状态：{status}"
-        )
-        requests.post(
-            f"https://api.telegram.org/bot{self.bot_token}/sendMessage",
-            json={"chat_id": self.chat_id, "text": text},
-            timeout=10
-        )
+    def notify_all(self, results: list[dict]):
+        """
+        合并所有账号结果，一次性推送到 TG
+        results = [
+            {"email": "...", "checkin": "...", "status": "..."},
+            ...
+        ]
+        """
+        lines = [f"🕒 {self._now()}  GLaDOS 签到结果\n"]
+        for res in results:
+            lines.append(
+                f"📧 {res['email']}\n"
+                f"🔔 签到: {res['checkin']}\n"
+                f"📊 状态: {res['status']}\n"
+                "--------------------"
+            )
+
+        message = "\n".join(lines)
+        try:
+            requests.post(
+                f"https://api.telegram.org/bot{self.bot_token}/sendMessage",
+                json={"chat_id": self.chat_id, "text": message},
+                timeout=10
+            )
+        except Exception as e:
+            print(f"⚠️ TG 消息发送失败: {e}")
 
     def run(self):
+        results = []
         for acc in self.accounts:
             time.sleep(random.uniform(2, 5))
-            checkin = self.checkin(acc["cookie"])
-            status = self.status(acc["cookie"])
-            self.notify(acc["email"], checkin, status)
+            checkin_result = self.checkin(acc["cookie"])
+            status_result = self.status(acc["cookie"])
+            results.append({
+                "email": acc["email"],
+                "checkin": checkin_result,
+                "status": status_result
+            })
+
+        self.notify_all(results)
 
 
 if __name__ == "__main__":
