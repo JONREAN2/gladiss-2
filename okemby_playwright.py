@@ -1,6 +1,6 @@
 import asyncio
 import os
-import requests
+import random
 from playwright.async_api import async_playwright
 
 BASE = "https://www.okemby.com"
@@ -13,32 +13,39 @@ TG_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 
 
-def send_tg(msg):
+async def send_tg(page, msg):
     if not TG_TOKEN or not TG_CHAT_ID:
         print("⚠ 未配置 TG")
         return
-    requests.post(
-        f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-        data={"chat_id": TG_CHAT_ID, "text": msg},
-        timeout=20
-    )
+
+    await page.evaluate(f"""
+    async () => {{
+        await fetch("https://api.telegram.org/bot{TG_TOKEN}/sendMessage", {{
+            method: "POST",
+            headers: {{ "Content-Type": "application/json" }},
+            body: JSON.stringify({{
+                chat_id: "{TG_CHAT_ID}",
+                text: `{msg}`
+            }})
+        }});
+    }}
+    """)
 
 
-async def run_account(username, password):
+async def run_account(browser, username, password):
     result = f"\n====== {username} ======\n"
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context()
-        page = await context.new_page()
+    context = await browser.new_context()
+    page = await context.new_page()
 
-        # 1️⃣ 打开首页过 CF
+    try:
+        # 1️⃣ 访问首页过 CF
         await page.goto(BASE, timeout=60000)
         await page.wait_for_load_state("networkidle")
-        await page.wait_for_timeout(5000)
+        await page.wait_for_timeout(random.randint(5000, 9000))
 
-        # 2️⃣ API 登录（浏览器环境）
-        login_data = await page.evaluate(f"""
+        # 2️⃣ 浏览器内登录
+        login = await page.evaluate(f"""
         async () => {{
             const r = await fetch("{LOGIN_API}", {{
                 method: "POST",
@@ -53,53 +60,88 @@ async def run_account(username, password):
         }}
         """)
 
-        token = login_data.get("token")
+        token = login?.token || login.token
+
         if not token:
-            await browser.close()
-            return result + f"❌ 登录失败\n"
+            return result + "❌ 登录失败\n"
 
         result += "✅ 登录成功\n"
 
-        # 3️⃣ 取浏览器 cookie
-        cookies = await context.cookies()
-        cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
-
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "User-Agent": "Mozilla/5.0",
-            "Cookie": cookie_str
-        }
-
-        # 4️⃣ 查询签到状态
-        status = requests.get(STATUS_API, headers=headers).json()
+        # 3️⃣ 查询状态（浏览器内）
+        status = await page.evaluate(f"""
+        async () => {{
+            const r = await fetch("{STATUS_API}", {{
+                headers: {{
+                    "Authorization": "Bearer {token}"
+                }}
+            }});
+            return await r.json();
+        }}
+        """)
 
         if status.get("hasCheckedInToday"):
             result += f"ℹ 今日已签到 {status.get('amount')} RCoin\n"
-            await browser.close()
             return result
 
-        # 5️⃣ 执行签到
-        checkin = requests.post(CHECKIN_API, headers=headers).json()
+        # 4️⃣ 真正签到（浏览器内执行，避免CF二次挑战）
+        checkin = await page.evaluate(f"""
+        async () => {{
+            const r = await fetch("{CHECKIN_API}", {{
+                method: "POST",
+                headers: {{
+                    "Authorization": "Bearer {token}"
+                }}
+            }});
+            return await r.json();
+        }}
+        """)
 
         if checkin.get("success"):
             result += f"✅ 签到成功 {checkin.get('amount')} RCoin\n"
         else:
-            result += f"❌ 签到失败\n"
+            result += "❌ 签到失败（可能触发CF）\n"
 
-        await browser.close()
-        return result
+    except Exception as e:
+        result += f"❌ 异常: {e}\n"
+        await page.screenshot(path=f"{username}_error.png")
+
+    await context.close()
+    return result
 
 
 async def main():
+    if not ACCOUNTS:
+        print("❌ 未配置 OKEMBY_ACCOUNT")
+        return
+
     final_msg = "📢 OKEmby 自动签到结果\n"
 
-    for acc in ACCOUNTS.split("&"):
-        username, password = acc.split("#")
-        res = await run_account(username, password)
-        final_msg += res
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+
+        accounts = ACCOUNTS.split("&")
+
+        for i, acc in enumerate(accounts):
+            username, password = acc.split("#")
+
+            if i > 0:
+                delay = random.randint(20, 60)
+                print(f"⏳ 等待 {delay} 秒避免风控...")
+                await asyncio.sleep(delay)
+
+            res = await run_account(browser, username, password)
+            final_msg += res
+
+        await browser.close()
 
     print(final_msg)
-    send_tg(final_msg)
+
+    # 用浏览器发TG（避免requests暴露IP特征）
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        page = await browser.new_page()
+        await send_tg(page, final_msg)
+        await browser.close()
 
 
 if __name__ == "__main__":
