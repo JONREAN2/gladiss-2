@@ -1,12 +1,13 @@
 import asyncio
 import os
+import random
 import requests
 from playwright.async_api import async_playwright
-import json
 
 BASE = "https://www.okemby.com"
 LOGIN_API = f"{BASE}/api/auth/login"
-CHECKIN_API = f"{BASE}/api/checkin"
+DASHBOARD_URL = f"{BASE}/dashboard"
+CHECKIN_API_PATTERN = "**/api/checkin"
 
 TG_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
@@ -34,11 +35,14 @@ async def run_account(username, password):
         page = await context.new_page()
 
         try:
-            # 1️⃣ 打开首页触发 CF
+            # 1️⃣ 访问首页触发 CF
+            print("🌐 访问首页")
             await page.goto(BASE, timeout=60000)
             await page.wait_for_load_state("networkidle")
+            await page.wait_for_timeout(random.randint(4000,7000))
 
-            # 2️⃣ 浏览器内 fetch 登录接口
+            # 2️⃣ 浏览器内 API 登录
+            print("🔐 API 登录")
             login_res = await page.evaluate(f"""
             async () => {{
                 const res = await fetch("{LOGIN_API}", {{
@@ -54,41 +58,48 @@ async def run_account(username, password):
             }}
             """)
 
-            token = login_res.get("token")
-            if not token:
+            if not login_res.get("token"):
                 result += f"❌ 登录失败: {login_res.get('message')}\n"
                 return result
-            result += f"✅ 登录成功\n"
 
-            # 3️⃣ 使用 token 调签到接口
+            result += "✅ 登录成功\n"
+
+            # 3️⃣ 进入 dashboard
+            print("📊 进入 dashboard")
+            await page.goto(DASHBOARD_URL, timeout=60000)
+            await page.wait_for_load_state("networkidle")
+            await page.wait_for_timeout(random.randint(3000,6000))
+
+            # 4️⃣ 点击签到按钮并监听网络请求
+            print("🚀 点击签到按钮")
+
             retries = 3
             for i in range(retries):
                 try:
-                    checkin_res = await page.evaluate(f"""
-                    async () => {{
-                        const res = await fetch("{CHECKIN_API}", {{
-                            method: "POST",
-                            headers: {{
-                                "Content-Type": "application/json",
-                                "Authorization": "Bearer {token}"
-                            }}
-                        }});
-                        return await res.json().catch(() => null);
-                    }}
-                    """)
-                    if checkin_res and checkin_res.get("success"):
-                        amount = checkin_res.get("amount", 0)
+                    async with page.expect_response(CHECKIN_API_PATTERN, timeout=15000) as response_info:
+                        await page.locator("button").filter(has_text="签到").first.click()
+
+                    response = await response_info.value
+                    data = await response.json()
+
+                    if data.get("success"):
+                        amount = data.get("amount", 0)
                         result += f"✅ 签到成功，获得 {amount} RCoin\n"
                         break
                     else:
-                        msg = checkin_res.get("message") if checkin_res else "返回异常"
+                        msg = data.get("message")
                         result += f"⚠ 第{i+1}次失败: {msg}\n"
+
+                    await page.wait_for_timeout(3000)
+
                 except Exception as e:
                     result += f"⚠ 第{i+1}次异常: {e}\n"
+                    await page.wait_for_timeout(3000)
 
         except Exception as e:
             result += f"❌ 异常: {e}\n"
             await page.screenshot(path=f"{username}_error.png")
+            print(f"📸 已保存截图 {username}_error.png")
 
         await browser.close()
 
@@ -100,12 +111,14 @@ async def main():
         return
 
     final_msg = "📢 OKEmby 自动签到结果\n"
+
     for acc in ACCOUNTS.split("&"):
         try:
             username, password = acc.split("#")
         except:
             final_msg += f"⚠ 格式错误: {acc}\n"
             continue
+
         res = await run_account(username, password)
         final_msg += res
 
