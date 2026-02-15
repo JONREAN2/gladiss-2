@@ -1,11 +1,12 @@
 import asyncio
 import os
-import random
 import requests
 from playwright.async_api import async_playwright
+import json
 
 BASE = "https://www.okemby.com"
-LOGIN_URL = f"{BASE}/login"
+LOGIN_API = f"{BASE}/api/auth/login"
+CHECKIN_API = f"{BASE}/api/checkin"
 
 TG_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
@@ -33,57 +34,61 @@ async def run_account(username, password):
         page = await context.new_page()
 
         try:
-            # 1️⃣ 打开首页触发CF
-            print("🌐 访问首页触发CF")
+            # 1️⃣ 打开首页触发 CF
             await page.goto(BASE, timeout=60000)
             await page.wait_for_load_state("networkidle")
-            await page.wait_for_timeout(random.randint(5000,8000))
 
-            # 2️⃣ 直接进入登录页
-            print("🔐 直接访问登录页")
-            await page.goto(LOGIN_URL, timeout=60000)
-            await page.wait_for_load_state("networkidle")
+            # 2️⃣ 浏览器内 fetch 登录接口
+            login_res = await page.evaluate(f"""
+            async () => {{
+                const res = await fetch("{LOGIN_API}", {{
+                    method: "POST",
+                    headers: {{"Content-Type": "application/json"}},
+                    body: JSON.stringify({{
+                        "userName": "{username}",
+                        "password": "{password}",
+                        "verificationToken": null
+                    }})
+                }});
+                return await res.json();
+            }}
+            """)
 
-            # 3️⃣ 等待输入框
-            await page.wait_for_selector("input[type='password']", timeout=60000)
+            token = login_res.get("token")
+            if not token:
+                result += f"❌ 登录失败: {login_res.get('message')}\n"
+                return result
+            result += f"✅ 登录成功\n"
 
-            # 4️⃣ 填写账号密码
-            await page.fill("input[type='text']", username)
-            await page.fill("input[type='password']", password)
-
-            # 点击登录按钮（匹配按钮而不是a标签）
-            await page.locator("button[type='submit']").click()
-
-            await page.wait_for_timeout(random.randint(5000,7000))
-
-            # 5️⃣ 浏览器内 fetch 签到
-            print("🚀 浏览器环境调用签到接口")
+            # 3️⃣ 使用 token 调签到接口
             retries = 3
             for i in range(retries):
                 try:
-                    result_json = await page.evaluate("""
-                    async () => {
-                        const res = await fetch('/api/checkin', {
-                            method: 'POST',
-                            headers: {'Content-Type': 'application/json'}
-                        });
-                        return await res.json();
-                    }
+                    checkin_res = await page.evaluate(f"""
+                    async () => {{
+                        const res = await fetch("{CHECKIN_API}", {{
+                            method: "POST",
+                            headers: {{
+                                "Content-Type": "application/json",
+                                "Authorization": "Bearer {token}"
+                            }}
+                        }});
+                        return await res.json().catch(() => null);
+                    }}
                     """)
-                    if result_json.get("success"):
-                        amount = result_json.get("amount", 0)
+                    if checkin_res and checkin_res.get("success"):
+                        amount = checkin_res.get("amount", 0)
                         result += f"✅ 签到成功，获得 {amount} RCoin\n"
                         break
                     else:
-                        result += f"⚠ 第{i+1}次失败: {result_json.get('message')}\n"
+                        msg = checkin_res.get("message") if checkin_res else "返回异常"
+                        result += f"⚠ 第{i+1}次失败: {msg}\n"
                 except Exception as e:
                     result += f"⚠ 第{i+1}次异常: {e}\n"
 
         except Exception as e:
-            print("❌ 异常:", e)
             result += f"❌ 异常: {e}\n"
             await page.screenshot(path=f"{username}_error.png")
-            print(f"📸 已保存截图 {username}_error.png")
 
         await browser.close()
 
@@ -95,14 +100,12 @@ async def main():
         return
 
     final_msg = "📢 OKEmby 自动签到结果\n"
-
     for acc in ACCOUNTS.split("&"):
         try:
             username, password = acc.split("#")
         except:
             final_msg += f"⚠ 格式错误: {acc}\n"
             continue
-
         res = await run_account(username, password)
         final_msg += res
 
