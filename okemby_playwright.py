@@ -6,38 +6,27 @@ from playwright.async_api import async_playwright
 
 BASE = "https://www.okemby.com"
 LOGIN_API = f"{BASE}/api/auth/login"
-STATUS_API = f"{BASE}/api/checkin/status"
 CHECKIN_API = f"{BASE}/api/checkin"
 
-ACCOUNTS = os.getenv("OKEMBY_ACCOUNT")
+ACCOUNTS = os.getenv("OKEMBY_ACCOUNT")  # user1#pass1&user2#pass2
 TG_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 
 
-# =============================
-# TG 推送（不用 JS，最稳）
-# =============================
-def send_tg(msg):
+def send_tg(msg: str):
     if not TG_TOKEN or not TG_CHAT_ID:
         print("⚠ 未配置 TG")
         return
-
     try:
         requests.post(
             f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-            json={
-                "chat_id": TG_CHAT_ID,
-                "text": msg
-            },
+            json={"chat_id": TG_CHAT_ID, "text": msg},
             timeout=20
         )
     except Exception as e:
         print("TG 发送失败:", e)
 
 
-# =============================
-# 单账号执行
-# =============================
 async def run_account(browser, username, password):
     result = f"\n====== {username} ======\n"
 
@@ -45,15 +34,15 @@ async def run_account(browser, username, password):
     page = await context.new_page()
 
     try:
-        # 1️⃣ 访问首页，过 CF
+        # 1️⃣ 打开首页（触发 CF）
         await page.goto(BASE, timeout=60000)
         await page.wait_for_load_state("networkidle")
-        await page.wait_for_timeout(random.randint(6000, 10000))
+        await page.wait_for_timeout(random.randint(5000, 9000))
 
-        # 2️⃣ 浏览器内登录
+        # 2️⃣ 登录（浏览器内 fetch）
         login = await page.evaluate(
-            """async ({login_url, username, password}) => {
-                const r = await fetch(login_url, {
+            """async ({url, username, password}) => {
+                const r = await fetch(url, {
                     method: "POST",
                     headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({
@@ -65,7 +54,7 @@ async def run_account(browser, username, password):
                 return await r.json();
             }""",
             {
-                "login_url": LOGIN_API,
+                "url": LOGIN_API,
                 "username": username,
                 "password": password
             }
@@ -73,52 +62,56 @@ async def run_account(browser, username, password):
 
         token = login.get("token")
         if not token:
+            await context.close()
             return result + "❌ 登录失败\n"
 
         result += "✅ 登录成功\n"
 
-        # 3️⃣ 查询签到状态
-        status = await page.evaluate(
-            """async ({status_url, token}) => {
-                const r = await fetch(status_url, {
-                    headers: {
-                        "Authorization": "Bearer " + token
-                    }
-                });
-                return await r.json();
-            }""",
-            {
-                "status_url": STATUS_API,
-                "token": token
+        # 3️⃣ 进入 dashboard 生成 Turnstile token
+        await page.goto(f"{BASE}/dashboard", timeout=60000)
+        await page.wait_for_load_state("networkidle")
+        await page.wait_for_timeout(6000)
+
+        # 4️⃣ 获取 cf-turnstile-response
+        verification_token = await page.evaluate("""
+            () => {
+                const el = document.querySelector('input[name="cf-turnstile-response"]');
+                return el ? el.value : null;
             }
-        )
+        """)
 
-        if status.get("hasCheckedInToday"):
-            result += f"ℹ 今日已签到 {status.get('amount')} RCoin\n"
+        if not verification_token:
             await context.close()
-            return result
+            return result + "❌ 未获取到人机验证 token（IP 可能被识别）\n"
 
-        # 4️⃣ 执行签到
+        result += "✅ 获取人机验证 token 成功\n"
+
+        # 5️⃣ 浏览器内发签到请求
         checkin = await page.evaluate(
-            """async ({checkin_url, token}) => {
-                const r = await fetch(checkin_url, {
+            """async ({url, token, vtoken}) => {
+                const r = await fetch(url, {
                     method: "POST",
                     headers: {
-                        "Authorization": "Bearer " + token
-                    }
+                        "Authorization": "Bearer " + token,
+                        "Content-Type": "application/json"
+                    },
+                    body: JSON.stringify({
+                        verificationToken: vtoken
+                    })
                 });
                 return await r.json();
             }""",
             {
-                "checkin_url": CHECKIN_API,
-                "token": token
+                "url": CHECKIN_API,
+                "token": token,
+                "vtoken": verification_token
             }
         )
 
         if checkin.get("success"):
-            result += f"✅ 签到成功 {checkin.get('amount')} RCoin\n"
+            result += f"🎉 签到成功 +{checkin.get('amount')} RCoin\n"
         else:
-            result += f"❌ 签到失败: {checkin}\n"
+            result += f"❌ 签到失败: {checkin.get('message')}\n"
 
     except Exception as e:
         result += f"❌ 异常: {e}\n"
@@ -128,9 +121,6 @@ async def run_account(browser, username, password):
     return result
 
 
-# =============================
-# 主程序
-# =============================
 async def main():
     if not ACCOUNTS:
         print("❌ 未配置 OKEMBY_ACCOUNT")
@@ -146,7 +136,6 @@ async def main():
         for i, acc in enumerate(accounts):
             username, password = acc.split("#")
 
-            # 多账号延迟，降低风控
             if i > 0:
                 delay = random.randint(20, 60)
                 print(f"⏳ 等待 {delay} 秒避免风控...")
