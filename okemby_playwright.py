@@ -60,14 +60,13 @@ async def run_account(browser, username, password):
         }}
         """)
 
-        token = login?.token || login.token
-
+        token = login.get("token")
         if not token:
             return result + "❌ 登录失败\n"
 
         result += "✅ 登录成功\n"
 
-        # 3️⃣ 查询状态（浏览器内）
+        # 3️⃣ 查询签到状态
         status = await page.evaluate(f"""
         async () => {{
             const r = await fetch("{STATUS_API}", {{
@@ -83,7 +82,7 @@ async def run_account(browser, username, password):
             result += f"ℹ 今日已签到 {status.get('amount')} RCoin\n"
             return result
 
-        # 4️⃣ 真正签到（浏览器内执行，避免CF二次挑战）
+        # 4️⃣ 执行签到（浏览器内）
         checkin = await page.evaluate(f"""
         async () => {{
             const r = await fetch("{CHECKIN_API}", {{
@@ -136,7 +135,7 @@ async def main():
 
     print(final_msg)
 
-    # 用浏览器发TG（避免requests暴露IP特征）
+    # 用浏览器发送TG
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         page = await browser.new_page()
