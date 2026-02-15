@@ -83,8 +83,10 @@ async def run_account(username, password):
             retries = 3
             for i in range(retries):
                 try:
+                    # 等待卡片存在（不强制 visible，因为可能动画或旋转）
                     await page.wait_for_selector('[data-checkin-card="default"]', timeout=20000)
 
+                    # 点击卡片并监听签到接口响应
                     async with page.expect_response(CHECKIN_API_PATTERN, timeout=15000) as response_info:
                         await page.locator('[data-checkin-card="default"]').click(force=True)
 
