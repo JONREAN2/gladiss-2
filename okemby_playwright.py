@@ -30,6 +30,7 @@ async def run_account(browser, username, password):
         timezone_id="Asia/Shanghai",
     )
 
+    # 彻底隐藏自动化特征
     await context.add_init_script("""
         Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
         delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
@@ -38,46 +39,45 @@ async def run_account(browser, username, password):
     """)
 
     page = await context.new_page()
+
     try:
-        # 1. 进主页过 CF 验证
+        # 1. 先过主页 CF（最关键）
         await page.goto(BASE, timeout=120000)
-        await page.wait_for_timeout(random.uniform(3, 6))
-        await page.wait_for_selector("body", timeout=60000)
-        await page.wait_for_timeout(random.uniform(2, 4))
+        await page.wait_for_timeout(random.uniform(5000, 8000))
 
-        # 2. 去登录页
+        # 2. 登录
         await page.goto(LOGIN_URL, timeout=60000)
-        await page.wait_for_timeout(random.uniform(2, 4))
+        await page.wait_for_timeout(random.uniform(2000, 3000))
 
-        # 3. 模拟人工输入登录（关键！）
-        await page.fill('input[name="userName"]', username, delay=random.randint(120, 200))
-        await page.fill('input[name="password"]', password, delay=random.randint(100, 180))
-        await page.wait_for_timeout(random.uniform(1, 2))
-        await page.click('button[type="submit"]', delay=random.randint(300, 600))
-        await page.wait_for_timeout(random.uniform(3, 5))
+        await page.fill('input[name="userName"]', username)
+        await page.wait_for_timeout(random.uniform(500, 1000))
+        await page.fill('input[name="password"]', password)
+        await page.wait_for_timeout(random.uniform(500, 1000))
 
-        # 判断是否登录成功
+        await page.click('button[type="submit"]')
+        await page.wait_for_timeout(random.uniform(4000, 6000))
+
         if "login" in page.url:
-            result += "❌ 登录失败（账号或密码错误）\n"
+            result += "❌ 登录失败"
             return result
 
         result += "✅ 登录成功\n"
 
-        # 4. 进入签到页
+        # 3. 进入签到页（这里会自动带CF凭证，不会触发人机验证）
         await page.goto(CHECKIN_URL, timeout=60000)
-        await page.wait_for_timeout(random.uniform(2, 4))
+        await page.wait_for_timeout(random.uniform(2000, 4000))
 
-        # 5. 点击签到按钮
-        checkin_btn = page.locator('button:has-text("每日签到")')
+        # 4. 点击签到按钮
+        checkin_btn = page.locator('button:contains("每日签到")')
         if await checkin_btn.count() > 0:
-            await checkin_btn.click(delay=random.randint(400, 700))
-            await page.wait_for_timeout(random.uniform(2, 3))
-            result += "✅ 签到成功"
+            await checkin_btn.click()
+            await page.wait_for_timeout(random.uniform(2000, 3000))
+            result += "✅ 签到成功（已过CF）"
         else:
             result += "ℹ️ 今日已签到"
 
     except Exception as e:
-        result += f"❌ 异常：{str(e)[:120]}"
+        result += f"❌ 异常：{str(e)[:150]}"
     finally:
         await context.close()
     return result
@@ -87,15 +87,13 @@ async def main():
         print("未配置账号")
         return
 
-    msg = "📢 OKEmby 自动签到（过CF修复版）\n"
+    msg = "📢 OKEmby 自动签到（纯浏览器过CF）\n"
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
             args=[
                 "--no-sandbox",
                 "--disable-blink-features=AutomationControlled",
-                "--disable-features=IsolateOrigins,site-per-process",
-                "--start-maximized",
             ]
         )
 
@@ -104,7 +102,7 @@ async def main():
                 u, p = acc.split("#", 1)
                 msg += await run_account(browser, u, p)
                 await asyncio.sleep(random.uniform(20, 40))
-            except Exception as e:
+            except:
                 msg += f"\n❌ 账号解析失败：{acc}"
 
         await browser.close()
