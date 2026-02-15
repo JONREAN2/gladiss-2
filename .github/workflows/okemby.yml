@@ -28,4 +28,4 @@ jobs:
           OKEMBY_ACCOUNT: ${{ secrets.OKEMBY_ACCOUNT }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
-        run: python okemby_action.py
+        run: python okemby_playwright.py
