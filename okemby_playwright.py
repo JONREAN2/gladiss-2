@@ -11,7 +11,7 @@ CHECKIN_API_PATTERN = "**/api/checkin"
 
 TG_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
-ACCOUNTS = os.getenv("OKEMBY_ACCOUNT")  # user1#pass1&user2#pass2
+ACCOUNTS = os.getenv("OKEMBY_ACCOUNT")  # 格式: user1#pass1&user2#pass2
 
 def send_tg(msg):
     if not TG_TOKEN or not TG_CHAT_ID:
@@ -58,10 +58,10 @@ async def run_account(username, password):
             }}
             """)
 
-            if not login_res.get("token"):
+            token = login_res.get("token")
+            if not token:
                 result += f"❌ 登录失败: {login_res.get('message')}\n"
                 return result
-
             result += "✅ 登录成功\n"
 
             # 3️⃣ 进入 dashboard
@@ -70,14 +70,14 @@ async def run_account(username, password):
             await page.wait_for_load_state("networkidle")
             await page.wait_for_timeout(random.randint(3000,6000))
 
-            # 4️⃣ 点击签到按钮并监听网络请求
+            # 4️⃣ 点击图标+文字签到按钮
             print("🚀 点击签到按钮")
-
             retries = 3
             for i in range(retries):
                 try:
                     async with page.expect_response(CHECKIN_API_PATTERN, timeout=15000) as response_info:
-                        await page.locator("button").filter(has_text="签到").first.click()
+                        # ✅ 终极稳定点击方式
+                        await page.locator("button:has-text('签到')").first.click()
 
                     response = await response_info.value
                     data = await response.json()
@@ -118,7 +118,6 @@ async def main():
         except:
             final_msg += f"⚠ 格式错误: {acc}\n"
             continue
-
         res = await run_account(username, password)
         final_msg += res
 
