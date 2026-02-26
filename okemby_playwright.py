@@ -5,120 +5,172 @@ import requests
 from playwright.async_api import async_playwright
 
 BASE = "https://www.okemby.com"
-LOGIN_URL = "https://www.okemby.com/login"
-CHECKIN_URL = "https://www.okemby.com/checkin"
+
+
+
 
 ACCOUNTS = os.getenv("OKEMBY_ACCOUNT")
 TG_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 
+
 def send_tg(msg):
     if not TG_TOKEN or not TG_CHAT_ID:
+        print("⚠ 未配置 TG")
         return
     try:
-        requests.post(f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-                      json={"chat_id": TG_CHAT_ID, "text": msg}, timeout=20)
+        requests.post(
+            f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
+            json={"chat_id": TG_CHAT_ID, "text": msg},
+            timeout=20
+        )
     except:
         pass
 
+
+async def human_behavior(page):
+    # 随机鼠标移动
+    for _ in range(random.randint(5, 12)):
+        await page.mouse.move(
+            random.randint(100, 1200),
+            random.randint(100, 800),
+            steps=random.randint(5, 20)
+        )
+        await asyncio.sleep(random.uniform(0.2, 0.8))
+
+    # 随机滚动
+    for _ in range(random.randint(2, 5)):
+        await page.mouse.wheel(0, random.randint(200, 600))
+        await asyncio.sleep(random.uniform(0.5, 1.2))
+
+
 async def run_account(browser, username, password):
     result = f"\n====== {username} ======\n"
-    context = await browser.new_context(
-        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/133.0.0.0 Safari/537.36",
-        viewport={"width": 1920, "height": 1080},
-        locale="zh-CN",
-        timezone_id="Asia/Shanghai",
-    )
-
-    await context.add_init_script("""
-        Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
-        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Symbol;
-        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Promise;
-        delete window.cdc_adoQpoasnfa76pfcZLmcfl_Array;
-    """)
-
+    context = await browser.new_context()
     page = await context.new_page()
 
+
+
+
+
+
+
+
+
+
+
+
     try:
-        await page.goto(BASE, timeout=120000)
-        await page.wait_for_timeout(random.uniform(6000, 10000))
+        # 打开首页（触发 CF）
+        await page.goto(BASE, timeout=60000)
+        await page.wait_for_load_state("networkidle")
+        await asyncio.sleep(random.uniform(4, 8))
 
-        await page.goto(LOGIN_URL, timeout=120000)
-        await page.wait_for_timeout(random.uniform(2000, 4000))
+        await human_behavior(page)
 
-        await page.wait_for_selector('input#userName', timeout=60000)
-        await page.fill('input#userName', username)
-        await page.wait_for_timeout(500)
+        # 登录页
+        await page.goto(f"{BASE}/login")
+        await page.fill('input[name="userName"]', username)
+        await asyncio.sleep(random.uniform(0.5, 1.5))
+        await page.fill('input[name="password"]', password)
+        await asyncio.sleep(random.uniform(0.5, 1.5))
 
-        await page.wait_for_selector('input#password', timeout=60000)
-        await page.fill('input#password', password)
-        await page.wait_for_timeout(500)
+        await human_behavior(page)
 
-        await page.click('button[type="submit"]', timeout=30000)
-        await page.wait_for_timeout(random.uniform(5000, 8000))
+        await page.click('button:has-text("登录")')
+        await asyncio.sleep(random.uniform(6, 10))
 
-        if "login" in page.url.lower():
-            result += "❌ 登录失败"
-            return result
+        if "login" in page.url:
+            await context.close()
+            return result + "❌ 登录失败\n"
+
         result += "✅ 登录成功\n"
 
-        await page.goto(CHECKIN_URL, timeout=120000)
-        await page.wait_for_timeout(random.uniform(3000, 6000))
+        # 进入 dashboard
+        await page.goto(f"{BASE}/dashboard")
+        await page.wait_for_load_state("networkidle")
+        await asyncio.sleep(random.uniform(6, 10))
 
-        # ====================== 终极正确逻辑 ======================
-        # 你的签到是：点击【包含“每日签到”文字的整个卡片】
-        # 不是按钮！不是按钮！不是按钮！
+        await human_behavior(page)
+
+        # 等待 Turnstile 渲染
+        await asyncio.sleep(random.uniform(5, 10))
+
+
+        # 查找签到卡片
         try:
-            # 匹配包含“每日签到”的卡片区域
-            card = page.locator('[data-checkin-card]')
-            if await card.count() > 0:
-                await card.scroll_into_view_if_needed()
-                await page.wait_for_timeout(1000)
-                await card.click(timeout=15000)  # 点整个卡片
-                await page.wait_for_timeout(3000)
-                result += "✅ 签到成功（点击卡片）"
-            else:
-                result += "ℹ️ 今日已签到"
+            card = await page.wait_for_selector(
+                '[data-checkin-card="default"]',
+                timeout=20000
+            )
+
+            box = await card.bounding_box()
+
+            # 模拟鼠标移动到按钮
+            await page.mouse.move(
+                box["x"] + box["width"] / 2,
+                box["y"] + box["height"] / 2,
+                steps=25
+            )
+
+            await asyncio.sleep(random.uniform(1, 2))
+
+            await page.mouse.click(
+                box["x"] + box["width"] / 2,
+                box["y"] + box["height"] / 2
+            )
+
+            await asyncio.sleep(random.uniform(5, 8))
+
+            result += "🎉 已尝试点击签到\n"
+
         except:
-            result += "ℹ️ 今日已签到"
+            result += "⚠ 未找到签到按钮（可能已签到或被拦截）\n"
 
     except Exception as e:
-        result += f"❌ 异常：{str(e)[:200]}"
-    finally:
-        await context.close()
+        result += f"❌ 异常: {e}\n"
+        await page.screenshot(path=f"{username}_error.png")
 
+    await context.close()
     return result
+
 
 async def main():
     if not ACCOUNTS:
-        print("未配置账号")
+        print("❌ 未配置 OKEMBY_ACCOUNT")
         return
 
-    msg = "📢 OKEmby 自动签到（终极卡片点击版）\n"
-    
+    final_msg = "📢 OKEmby GitHub 强化拟人签到\n"
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(
             headless=True,
             args=[
-                "--no-sandbox",
                 "--disable-blink-features=AutomationControlled",
-                "--disable-gpu",
-                "--ignore-certificate-errors",
+                "--no-sandbox",
+                "--disable-dev-shm-usage"
+
             ]
         )
 
-        for acc in ACCOUNTS.split("&"):
-            try:
-                u, pwd = acc.split("#", 1)
-                msg += await run_account(browser, u, pwd)
-                await asyncio.sleep(random.uniform(20, 40))
-            except Exception as e:
-                msg += f"\n❌ 账号解析失败：{acc}"
+        accounts = ACCOUNTS.split("&")
+
+        for i, acc in enumerate(accounts):
+            username, password = acc.split("#")
+
+            if i > 0:
+                delay = random.randint(30, 90)
+                print(f"⏳ 等待 {delay} 秒避免风控...")
+                await asyncio.sleep(delay)
+
+            res = await run_account(browser, username, password)
+            final_msg += res
 
         await browser.close()
 
-    print(msg)
-    send_tg(msg)
+    print(final_msg)
+    send_tg(final_msg)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
