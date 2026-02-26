@@ -1,140 +1,136 @@
 import asyncio
 import os
+import random
 import requests
 from playwright.async_api import async_playwright
 
 BASE = "https://www.okemby.com"
 LOGIN_API = f"{BASE}/api/auth/login"
-USER_API = f"{BASE}/api/user"
+STATUS_API = f"{BASE}/api/checkin/status"
+CHECKIN_API = f"{BASE}/api/checkin"
+
 ACCOUNTS = os.getenv("OKEMBY_ACCOUNT")
 TG_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
+
 
 def send_tg(msg):
     if not TG_TOKEN or not TG_CHAT_ID:
         print("⚠ 未配置 TG")
         return
-    requests.post(
-        f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-        data={"chat_id": TG_CHAT_ID, "text": msg},
-        timeout=20
-    )
-
-async def get_user_balance(headers):
-    """查询用户钱包余额"""
     try:
-        response = requests.get(USER_API, headers=headers, timeout=10)
-        
-        # 调试：打印响应信息
-        print(f"Status Code: {response.status_code}")
-        print(f"Response Headers: {response.headers}")
-        print(f"Response Body: {response.text[:500]}")  # 打印前500个字符
-        
-        if response.status_code != 200:
-            print(f"⚠ API 返回状态码: {response.status_code}")
-            return None
-        
-        # 检查响应是否为空
-        if not response.text:
-            print("⚠ API 返回空响应")
-            return None
-        
-        data = response.json()
-        
-        if data.get("success"):
-            balance = data.get("data", {}).get("balance") or data.get("balance") or 0
-            return balance
-        return None
-        
-    except requests.exceptions.RequestException as e:
-        print(f"网络请求异常: {str(e)}")
-        return None
-    except ValueError as e:
-        print(f"JSON 解析异常: {str(e)}")
-        return None
+        requests.post(
+            f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
+            data={"chat_id": TG_CHAT_ID, "text": msg},
+            timeout=20
+        )
+    except Exception as e:
+        print("TG 发送失败:", e)
+
 
 async def run_account(username, password):
     result = f"\n====== {username} ======\n"
+
     async with async_playwright() as p:
         browser = await p.chromium.launch(headless=True)
         context = await browser.new_context()
         page = await context.new_page()
-        
-        try:
-            # 1️⃣ 打开首页过 CF
-            await page.goto(BASE, timeout=60000)
-            await page.wait_for_load_state("networkidle")
-            await page.wait_for_timeout(5000)
-            
-            # 2️⃣ API 登录（浏览器环境）
-            login_data = await page.evaluate(f"""
-            async () => {{
-                const r = await fetch("{LOGIN_API}", {{
-                    method: "POST",
-                    headers: {{ "Content-Type": "application/json" }},
-                    body: JSON.stringify({{
-                        userName: "{username}",
-                        password: "{password}",
-                        verificationToken: null
-                    }})
-                }});
-                return await r.json();
-            }}
-            """)
-            
-            token = login_data.get("token")
-            if not token:
-                return result + f"❌ 登录失败\n"
-            
-            result += "✅ 登录成功\n"
-            
-            # 3️⃣ 取浏览器 cookie
-            cookies = await context.cookies()
-            cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
-            headers = {
-                "Authorization": f"Bearer {token}",
-                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.2 Mobile/15E148 Safari/604.1",
-                "Cookie": cookie_str,
-                "Content-Type": "application/json",
-                "Accept": "*/*",
-                "Origin": BASE,
-                "Referer": f"{BASE}/login"
-            }
-            
-            # 4️⃣ 查询钱包余额
-            balance = await get_user_balance(headers)
-            if balance is not None:
-                result += f"💰 钱包余额: {balance} RCoin\n"
-            else:
-                result += f"⚠ 无法获取余额信息\n"
-        
-        except Exception as e:
-            result += f"❌ 执行异常: {str(e)}\n"
-        
-        finally:
+
+        # 1️⃣ 打开首页过 CF
+        await page.goto(BASE, timeout=60000)
+        await page.wait_for_load_state("networkidle")
+
+        delay = random.randint(4, 8)
+        await page.wait_for_timeout(delay * 1000)
+
+        # 2️⃣ 登录
+        login_data = await page.evaluate(f"""
+        async () => {{
+            const r = await fetch("{LOGIN_API}", {{
+                method: "POST",
+                headers: {{ "Content-Type": "application/json" }},
+                body: JSON.stringify({{
+                    userName: "{username}",
+                    password: "{password}",
+                    verificationToken: null
+                }})
+            }});
+            return await r.json();
+        }}
+        """)
+
+        token = login_data.get("token")
+        if not token:
             await browser.close()
-        
+            return result + "❌ 登录失败\n"
+
+        result += "✅ 登录成功\n"
+
+        # 登录后余额
+        user_info = login_data.get("user", {})
+        before_balance = float(user_info.get("rCoin", 0))
+        result += f"💰 当前余额: {before_balance} RCoin\n"
+
+        # 取 cookie
+        cookies = await context.cookies()
+        cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
+
+        headers = {
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "Mozilla/5.0",
+            "Cookie": cookie_str
+        }
+
+        # 3️⃣ 查询签到状态
+        status = requests.get(STATUS_API, headers=headers).json()
+
+        if status.get("hasCheckedInToday"):
+            result += f"ℹ 今日已签到 {status.get('amount')} RCoin\n"
+            await browser.close()
+            return result
+
+        # 防风控延迟
+        await asyncio.sleep(random.randint(3, 6))
+
+        # 4️⃣ 执行签到
+        checkin = requests.post(CHECKIN_API, headers=headers).json()
+
+        if checkin.get("success"):
+            gain = float(checkin.get("amount", 0))
+            after_balance = round(before_balance + gain, 2)
+
+            result += f"✅ 签到成功 +{gain} RCoin\n"
+            result += f"💰 签到后余额: {after_balance} RCoin\n"
+        else:
+            result += "❌ 签到失败\n"
+
+        await browser.close()
         return result
 
+
 async def main():
-    final_msg = "📢 OKEmby 钱包查询结果\n"
-    
-    if not ACCOUNTS:
-        print("❌ 未配置账户")
-        return
-    
+    final_msg = "📢 OKEmby 自动签到结果\n"
+    total_balance = 0.0
+
     for acc in ACCOUNTS.split("&"):
-        if not acc or "#" not in acc:
-            continue
-        parts = acc.split("#", 1)
-        if len(parts) != 2:
-            continue
-        username, password = parts
+        username, password = acc.split("#")
         res = await run_account(username, password)
         final_msg += res
-    
+
+        # 统计余额
+        try:
+            for line in res.split("\n"):
+                if "当前余额" in line:
+                    bal = float(line.split(":")[1].strip().split()[0])
+                    total_balance += bal
+        except:
+            pass
+
+    final_msg += f"\n📊 所有账号总余额: {round(total_balance,2)} RCoin\n"
+
     print(final_msg)
     send_tg(final_msg)
+
 
 if __name__ == "__main__":
     asyncio.run(main())
