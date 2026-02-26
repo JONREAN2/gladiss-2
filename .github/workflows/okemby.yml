@@ -1,31 +1,25 @@
-name: OKEmby Auto Checkin
+name: OKEmby 自动归集
 
 on:
   schedule:
-    - cron: '30 16 * * *'  # 北京时间 00:30
+    - cron: "0 9 * * *" # 每天9点执行
   workflow_dispatch:
 
 jobs:
-  checkin:
+  okemby:
     runs-on: ubuntu-latest
-
+    env:
+      OKEMBY_ACCOUNTS: ${{ secrets.OKEMBY_ACCOUNTS }}
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: 3.11
-
-      - name: Install Dependencies
+      - name: 安装依赖
         run: |
+          python -m pip install --upgrade pip
           pip install playwright requests
-          playwright install --with-deps chromium
+          playwright install
 
-      - name: Run Script
-        env:
-          OKEMBY_ACCOUNT: ${{ secrets.OKEMBY_ACCOUNTS }}
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      - name: 运行 OKEmby 脚本
         run: python okemby_playwright.py
