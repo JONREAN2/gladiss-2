@@ -8,10 +8,13 @@ BASE = "https://www.okemby.com"
 LOGIN_API = f"{BASE}/api/auth/login"
 STATUS_API = f"{BASE}/api/checkin/status"
 CHECKIN_API = f"{BASE}/api/checkin"
+TRANSFER_API = f"{BASE}/api/redpacket"
 
 ACCOUNTS = os.getenv("OKEMBY_ACCOUNT")
 TG_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
+
+TARGET_USER_ID = 647   # 🔥 改成你要归集的用户ID
 
 
 def send_tg(msg):
@@ -36,14 +39,12 @@ async def run_account(username, password):
         context = await browser.new_context()
         page = await context.new_page()
 
-        # 1️⃣ 打开首页过 CF
+        # 过CF
         await page.goto(BASE, timeout=60000)
         await page.wait_for_load_state("networkidle")
+        await page.wait_for_timeout(random.randint(4, 8) * 1000)
 
-        delay = random.randint(4, 8)
-        await page.wait_for_timeout(delay * 1000)
-
-        # 2️⃣ 登录
+        # 登录
         login_data = await page.evaluate(f"""
         async () => {{
             const r = await fetch("{LOGIN_API}", {{
@@ -66,67 +67,58 @@ async def run_account(username, password):
 
         result += "✅ 登录成功\n"
 
-        # 登录后余额
         user_info = login_data.get("user", {})
-        before_balance = float(user_info.get("rCoin", 0))
-        result += f"💰 当前余额: {before_balance} RCoin\n"
+        balance = float(user_info.get("rCoin", 0))
+        result += f"💰 当前余额: {balance} RCoin\n"
 
-        # 取 cookie
+        if balance <= 0.05:
+            result += "⚠ 余额太少，不转账\n"
+            await browser.close()
+            return result
+
         cookies = await context.cookies()
         cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
 
         headers = {
             "Authorization": f"Bearer {token}",
             "User-Agent": "Mozilla/5.0",
-            "Cookie": cookie_str
+            "Cookie": cookie_str,
+            "Content-Type": "application/json"
         }
 
-        # 3️⃣ 查询签到状态
-        status = requests.get(STATUS_API, headers=headers).json()
-
-        if status.get("hasCheckedInToday"):
-            result += f"ℹ 今日已签到 {status.get('amount')} RCoin\n"
-            await browser.close()
-            return result
-
-        # 防风控延迟
         await asyncio.sleep(random.randint(3, 6))
 
-        # 4️⃣ 执行签到
-        checkin = requests.post(CHECKIN_API, headers=headers).json()
+        # 保留0.01
+        transfer_amount = round(balance - 0.01, 2)
 
-        if checkin.get("success"):
-            gain = float(checkin.get("amount", 0))
-            after_balance = round(before_balance + gain, 2)
+        transfer_data = {
+            "type": "single",
+            "totalAmount": transfer_amount,
+            "recipientId": TARGET_USER_ID
+        }
 
-            result += f"✅ 签到成功 +{gain} RCoin\n"
-            result += f"💰 签到后余额: {after_balance} RCoin\n"
+        transfer = requests.post(
+            TRANSFER_API,
+            headers=headers,
+            json=transfer_data
+        ).json()
+
+        if transfer.get("success") or transfer.get("message") == "发送成功":
+            result += f"💸 已转账 {transfer_amount} RCoin → 用户 {TARGET_USER_ID}\n"
         else:
-            result += "❌ 签到失败\n"
+            result += f"❌ 转账失败: {transfer}\n"
 
         await browser.close()
         return result
 
 
 async def main():
-    final_msg = "📢 OKEmby 自动签到结果\n"
-    total_balance = 0.0
+    final_msg = "📢 OKEmby 自动归集结果\n"
 
     for acc in ACCOUNTS.split("&"):
         username, password = acc.split("#")
         res = await run_account(username, password)
         final_msg += res
-
-        # 统计余额
-        try:
-            for line in res.split("\n"):
-                if "当前余额" in line:
-                    bal = float(line.split(":")[1].strip().split()[0])
-                    total_balance += bal
-        except:
-            pass
-
-    final_msg += f"\n📊 所有账号总余额: {round(total_balance,2)} RCoin\n"
 
     print(final_msg)
     send_tg(final_msg)
