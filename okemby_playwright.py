@@ -10,8 +10,6 @@ LOGIN_API = BASE + "/api/Users/AuthenticateByName"
 TRANSFER_API = BASE + "/api/RedPacket/Send"
 
 ACCOUNTS = os.getenv("OKEMBY_ACCOUNTS")
-
-# 🔥 TG 推送变量
 TG_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 
@@ -29,7 +27,7 @@ CHAIN_USERS = [
     390   # showlo
 ]
 
-LOG = []  # 🔥 日志缓存
+LOG = []  # 日志缓存
 
 
 def log(msg):
@@ -130,7 +128,11 @@ async def verify_accounts(acc_list):
 
     for i, acc in enumerate(acc_list):
         username, password = acc.split("#")
-        token, balance, cookie_str, real_id = await login_and_get_info(username, password)
+        try:
+            token, balance, cookie_str, real_id = await login_and_get_info(username, password)
+        except:
+            log(f"❌ {username} 登录失败")
+            return False
 
         if real_id != CHAIN_USERS[i]:
             log(f"❌ ID不匹配: {username}")
@@ -146,12 +148,14 @@ async def verify_accounts(acc_list):
 async def main():
     if not ACCOUNTS:
         log("未设置 OKEMBY_ACCOUNTS")
+        send_tg("\n".join(LOG))
         return
 
     acc_list = ACCOUNTS.split("&")
 
     if len(acc_list) != len(CHAIN_USERS):
         log("账号数量与ID链数量不一致")
+        send_tg("\n".join(LOG))
         return
 
     ok = await verify_accounts(acc_list)
@@ -199,8 +203,6 @@ async def main():
             log(f"{username} 查询失败")
 
     log("\n🎯 执行结束")
-
-    # 🔥 最后统一TG推送
     send_tg("\n".join(LOG))
 
 
