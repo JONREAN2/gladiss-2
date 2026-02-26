@@ -25,7 +25,7 @@ jobs:
 
       - name: Run Script
         env:
-          OKEMBY_ACCOUNT: ${{ secrets.OKEMBY_ACCOUNT }}
+          OKEMBY_ACCOUNT: ${{ secrets.OKEMBY_ACCOUNTS }}
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
           TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
         run: python okemby_playwright.py
