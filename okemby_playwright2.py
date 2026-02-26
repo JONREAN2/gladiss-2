@@ -9,7 +9,7 @@ BASE = "https://www.okemby.com"
 LOGIN_API = f"{BASE}/api/auth/login"
 TRANSFER_API = f"{BASE}/api/redpacket"
 
-ACCOUNTS = os.getenv("OKEMBY_ACCOUNTS")  # 10个账号 username#password & ... 
+ACCOUNTS = os.getenv("OKEMBY_ACCOUNTS2")  # 10个账号 username#password & ... 
 TG_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 
