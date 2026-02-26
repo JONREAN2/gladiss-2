@@ -2,6 +2,7 @@
 import asyncio
 import os
 import random
+import requests
 from playwright.async_api import async_playwright
 
 BASE = "https://www.okemby.com"
@@ -9,6 +10,10 @@ LOGIN_API = BASE + "/api/Users/AuthenticateByName"
 TRANSFER_API = BASE + "/api/RedPacket/Send"
 
 ACCOUNTS = os.getenv("OKEMBY_ACCOUNTS")
+
+# 🔥 TG 推送变量
+TG_TOKEN = os.getenv("TG_BOT_TOKEN")
+TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 
 # 链式顺序（必须与账号顺序对应）
 CHAIN_USERS = [
@@ -23,6 +28,27 @@ CHAIN_USERS = [
     644,  # f55i933
     390   # showlo
 ]
+
+LOG = []  # 🔥 日志缓存
+
+
+def log(msg):
+    print(msg)
+    LOG.append(str(msg))
+
+
+def send_tg(msg):
+    if not TG_TOKEN or not TG_CHAT_ID:
+        print("⚠ 未配置 TG")
+        return
+    try:
+        requests.post(
+            f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
+            data={"chat_id": TG_CHAT_ID, "text": msg},
+            timeout=20
+        )
+    except Exception as e:
+        print("TG 发送失败:", e)
 
 
 # 登录并获取 token + 余额 + id
@@ -100,41 +126,41 @@ async def transfer(token, cookie_str, amount, to_id):
 
 # 校验ID
 async def verify_accounts(acc_list):
-    print("🔍 校验账号ID中...")
+    log("🔍 校验账号ID中...")
 
     for i, acc in enumerate(acc_list):
         username, password = acc.split("#")
         token, balance, cookie_str, real_id = await login_and_get_info(username, password)
 
         if real_id != CHAIN_USERS[i]:
-            print(f"❌ ID不匹配: {username}")
-            print(f"期望ID: {CHAIN_USERS[i]} 实际ID: {real_id}")
+            log(f"❌ ID不匹配: {username}")
+            log(f"期望ID: {CHAIN_USERS[i]} 实际ID: {real_id}")
             return False
 
-        print(f"✅ {username} ID正确 ({real_id})")
+        log(f"✅ {username} ID正确 ({real_id})")
 
-    print("🎉 全部ID校验通过\n")
+    log("🎉 全部ID校验通过\n")
     return True
 
 
 async def main():
     if not ACCOUNTS:
-        print("未设置 OKEMBY_ACCOUNTS")
+        log("未设置 OKEMBY_ACCOUNTS")
         return
 
     acc_list = ACCOUNTS.split("&")
 
     if len(acc_list) != len(CHAIN_USERS):
-        print("账号数量与ID链数量不一致")
+        log("账号数量与ID链数量不一致")
         return
 
-    # 先校验ID
     ok = await verify_accounts(acc_list)
     if not ok:
-        print("⛔ ID校验失败，停止执行")
+        log("⛔ ID校验失败，停止执行")
+        send_tg("\n".join(LOG))
         return
 
-    print("🚀 开始链式转账\n")
+    log("🚀 开始链式转账\n")
 
     for i in range(len(acc_list) - 1):
 
@@ -144,35 +170,38 @@ async def main():
         try:
             token, balance, cookie_str, user_id = await login_and_get_info(username, password)
         except:
-            print(f"❌ {username} 登录失败，跳过")
+            log(f"❌ {username} 登录失败，跳过")
             continue
 
         if balance <= 0:
-            print(f"⚠ {username} 余额为0，跳过")
+            log(f"⚠ {username} 余额为0，跳过")
             continue
 
-        print(f"💰 {username} 余额 {balance} → 转给 {to_id}")
+        log(f"💰 {username} 余额 {balance} → 转给 {to_id}")
 
         result = await transfer(token, cookie_str, balance, to_id)
 
         if result.get("success"):
-            print(f"✅ 转账成功\n")
+            log("✅ 转账成功\n")
         else:
-            print(f"⚠ 转账失败: {result.get('message')}\n")
+            log(f"⚠ 转账失败: {result.get('message')}\n")
 
         await asyncio.sleep(random.randint(5, 10))
 
-    print("\n🔎 最终余额检查\n")
+    log("\n🔎 最终余额检查\n")
 
     for i, acc in enumerate(acc_list):
         username, password = acc.split("#")
         try:
             token, balance, cookie_str, user_id = await login_and_get_info(username, password)
-            print(f"{username} ({user_id}) 余额: {balance}")
+            log(f"{username} ({user_id}) 余额: {balance}")
         except:
-            print(f"{username} 查询失败")
+            log(f"{username} 查询失败")
 
-    print("\n🎯 执行结束")
+    log("\n🎯 执行结束")
+
+    # 🔥 最后统一TG推送
+    send_tg("\n".join(LOG))
 
 
 if __name__ == "__main__":
