@@ -24,14 +24,33 @@ async def get_user_balance(headers):
     """查询用户钱包余额"""
     try:
         response = requests.get(USER_API, headers=headers, timeout=10)
+        
+        # 调试：打印响应信息
+        print(f"Status Code: {response.status_code}")
+        print(f"Response Headers: {response.headers}")
+        print(f"Response Body: {response.text[:500]}")  # 打印前500个字符
+        
+        if response.status_code != 200:
+            print(f"⚠ API 返回状态码: {response.status_code}")
+            return None
+        
+        # 检查响应是否为空
+        if not response.text:
+            print("⚠ API 返回空响应")
+            return None
+        
         data = response.json()
         
-        if response.status_code == 200 and data.get("success"):
+        if data.get("success"):
             balance = data.get("data", {}).get("balance") or data.get("balance") or 0
             return balance
         return None
-    except Exception as e:
-        print(f"查询余额异常: {str(e)}")
+        
+    except requests.exceptions.RequestException as e:
+        print(f"网络请求异常: {str(e)}")
+        return None
+    except ValueError as e:
+        print(f"JSON 解析异常: {str(e)}")
         return None
 
 async def run_account(username, password):
@@ -74,9 +93,12 @@ async def run_account(username, password):
             cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
             headers = {
                 "Authorization": f"Bearer {token}",
-                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15",
+                "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/26.2 Mobile/15E148 Safari/604.1",
                 "Cookie": cookie_str,
-                "Content-Type": "application/json"
+                "Content-Type": "application/json",
+                "Accept": "*/*",
+                "Origin": BASE,
+                "Referer": f"{BASE}/login"
             }
             
             # 4️⃣ 查询钱包余额
