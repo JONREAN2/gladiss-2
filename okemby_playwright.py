@@ -6,7 +6,7 @@ import requests
 from playwright.async_api import async_playwright
 
 BASE = "https://www.okemby.com"
-LOGIN_API = BASE + "/api/auth/login"   # 🔥 修正登录接口
+LOGIN_API = BASE + "/api/auth/login"
 TRANSFER_API = BASE + "/api/redpacket"
 
 ACCOUNTS = os.getenv("OKEMBY_ACCOUNTS")
@@ -27,7 +27,7 @@ CHAIN_USERS = [
     390   # showlo
 ]
 
-LOG = []  # 日志缓存
+LOG = []
 
 def log(msg):
     print(msg)
@@ -72,7 +72,6 @@ async def login_and_get_info(username, password):
         }}
         """)
 
-        # 🔥 修正返回字段
         token = login_data.get("token")
         user = login_data.get("user", {})
         balance = float(user.get("rCoin", 0))
@@ -171,13 +170,16 @@ async def main():
             log(f"❌ {username} 登录失败，跳过")
             continue
 
-        if balance <= 0:
-            log(f"⚠ {username} 余额为0，跳过")
+        # 🔥 保留 0.01
+        if balance <= 0.01:
+            log(f"⚠ {username} 余额不足 0.01，跳过")
             continue
 
-        log(f"💰 {username} 余额 {balance} → 转给 {to_id}")
+        transfer_amount = round(balance - 0.01, 2)
 
-        result = await transfer(token, cookie_str, balance, to_id)
+        log(f"💰 {username} 余额 {balance} → 转给 {to_id} (转账 {transfer_amount})")
+
+        result = await transfer(token, cookie_str, transfer_amount, to_id)
 
         if result.get("success") or result.get("message") == "发送成功":
             log("✅ 转账成功\n")
