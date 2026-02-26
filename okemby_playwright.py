@@ -6,8 +6,8 @@ import requests
 from playwright.async_api import async_playwright
 
 BASE = "https://www.okemby.com"
-LOGIN_API = BASE + "/api/Users/AuthenticateByName"
-TRANSFER_API = BASE + "/api/RedPacket/Send"
+LOGIN_API = BASE + "/api/auth/login"   # 🔥 修正登录接口
+TRANSFER_API = BASE + "/api/redpacket"
 
 ACCOUNTS = os.getenv("OKEMBY_ACCOUNTS")
 TG_TOKEN = os.getenv("TG_BOT_TOKEN")
@@ -29,11 +29,9 @@ CHAIN_USERS = [
 
 LOG = []  # 日志缓存
 
-
 def log(msg):
     print(msg)
     LOG.append(str(msg))
-
 
 def send_tg(msg):
     if not TG_TOKEN or not TG_CHAT_ID:
@@ -47,7 +45,6 @@ def send_tg(msg):
         )
     except Exception as e:
         print("TG 发送失败:", e)
-
 
 # 登录并获取 token + 余额 + id
 async def login_and_get_info(username, password):
@@ -75,24 +72,23 @@ async def login_and_get_info(username, password):
         }}
         """)
 
-        token = login_data.get("AccessToken")
-        user = login_data.get("User", {})
+        # 🔥 修正返回字段
+        token = login_data.get("token")
+        user = login_data.get("user", {})
         balance = float(user.get("rCoin", 0))
-        user_id = user.get("Id")
+        user_id = user.get("id")
 
         cookies = await context.cookies()
         cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
 
         await browser.close()
-
         return token, balance, cookie_str, user_id
-
 
 # 转币
 async def transfer(token, cookie_str, amount, to_id):
     headers = {
         "Content-Type": "application/json",
-        "X-Emby-Token": token,
+        "Authorization": f"Bearer {token}",
         "Cookie": cookie_str
     }
 
@@ -110,8 +106,9 @@ async def transfer(token, cookie_str, amount, to_id):
                 method: "POST",
                 headers: {headers},
                 body: JSON.stringify({{
-                    userId: {to_id},
-                    amount: {amount}
+                    type: "single",
+                    totalAmount: {amount},
+                    recipientId: {to_id}
                 }})
             }});
             return await r.json();
@@ -120,7 +117,6 @@ async def transfer(token, cookie_str, amount, to_id):
 
         await browser.close()
         return result
-
 
 # 校验ID
 async def verify_accounts(acc_list):
@@ -144,7 +140,6 @@ async def verify_accounts(acc_list):
     log("🎉 全部ID校验通过\n")
     return True
 
-
 async def main():
     if not ACCOUNTS:
         log("未设置 OKEMBY_ACCOUNTS")
@@ -167,7 +162,6 @@ async def main():
     log("🚀 开始链式转账\n")
 
     for i in range(len(acc_list) - 1):
-
         username, password = acc_list[i].split("#")
         to_id = CHAIN_USERS[i + 1]
 
@@ -185,7 +179,7 @@ async def main():
 
         result = await transfer(token, cookie_str, balance, to_id)
 
-        if result.get("success"):
+        if result.get("success") or result.get("message") == "发送成功":
             log("✅ 转账成功\n")
         else:
             log(f"⚠ 转账失败: {result.get('message')}\n")
@@ -204,7 +198,6 @@ async def main():
 
     log("\n🎯 执行结束")
     send_tg("\n".join(LOG))
-
 
 if __name__ == "__main__":
     asyncio.run(main())
