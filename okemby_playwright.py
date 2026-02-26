@@ -5,14 +5,16 @@ import requests
 from playwright.async_api import async_playwright
 
 BASE = "https://www.okemby.com"
+LOGIN_API = f"{BASE}/api/auth/login"
+DASHBOARD_URL = f"{BASE}/dashboard"
+CHECKIN_API_PATTERN = "**/api/checkin"
 
-
-
-
-ACCOUNTS = os.getenv("OKEMBY_ACCOUNT")
+# TG Bot 配置
 TG_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 
+# 多账号配置，格式: user1#pass1&user2#pass2
+ACCOUNTS = os.getenv("OKEMBY_ACCOUNT")  
 
 def send_tg(msg):
     if not TG_TOKEN or not TG_CHAT_ID:
@@ -21,152 +23,117 @@ def send_tg(msg):
     try:
         requests.post(
             f"https://api.telegram.org/bot{TG_TOKEN}/sendMessage",
-            json={"chat_id": TG_CHAT_ID, "text": msg},
+            data={"chat_id": TG_CHAT_ID, "text": msg},
             timeout=20
         )
+    except Exception as e:
+        print("TG 发送失败:", e)
+
+async def wait_loading_end(page):
+    """等待页面动画/加载结束"""
+    try:
+        while await page.evaluate("window.isLoadingAnimating ? window.isLoadingAnimating() : false"):
+            await page.wait_for_timeout(500)
     except:
         pass
 
-
-async def human_behavior(page):
-    # 随机鼠标移动
-    for _ in range(random.randint(5, 12)):
-        await page.mouse.move(
-            random.randint(100, 1200),
-            random.randint(100, 800),
-            steps=random.randint(5, 20)
-        )
-        await asyncio.sleep(random.uniform(0.2, 0.8))
-
-    # 随机滚动
-    for _ in range(random.randint(2, 5)):
-        await page.mouse.wheel(0, random.randint(200, 600))
-        await asyncio.sleep(random.uniform(0.5, 1.2))
-
-
-async def run_account(browser, username, password):
+async def run_account(username, password):
     result = f"\n====== {username} ======\n"
-    context = await browser.new_context()
-    page = await context.new_page()
+@@ -45,99 +32,75 @@ async def run_account(username, password):
+        context = await browser.new_context()
+        page = await context.new_page()
 
-
-
-
-
-
-
-
-
-
-
-
-    try:
-        # 打开首页（触发 CF）
-        await page.goto(BASE, timeout=60000)
-        await page.wait_for_load_state("networkidle")
-        await asyncio.sleep(random.uniform(4, 8))
-
-        await human_behavior(page)
-
-        # 登录页
-        await page.goto(f"{BASE}/login")
-        await page.fill('input[name="userName"]', username)
-        await asyncio.sleep(random.uniform(0.5, 1.5))
-        await page.fill('input[name="password"]', password)
-        await asyncio.sleep(random.uniform(0.5, 1.5))
-
-        await human_behavior(page)
-
-        await page.click('button:has-text("登录")')
-        await asyncio.sleep(random.uniform(6, 10))
-
-        if "login" in page.url:
-            await context.close()
-            return result + "❌ 登录失败\n"
-
-        result += "✅ 登录成功\n"
-
-        # 进入 dashboard
-        await page.goto(f"{BASE}/dashboard")
-        await page.wait_for_load_state("networkidle")
-        await asyncio.sleep(random.uniform(6, 10))
-
-        await human_behavior(page)
-
-        # 等待 Turnstile 渲染
-        await asyncio.sleep(random.uniform(5, 10))
-
-
-        # 查找签到卡片
         try:
-            card = await page.wait_for_selector(
-                '[data-checkin-card="default"]',
-                timeout=20000
-            )
+            # 1️⃣ 访问首页触发 CF
+            print("🌐 访问首页")
+            await page.goto(BASE, timeout=60000)
+            await page.wait_for_load_state("networkidle")
+            await page.wait_for_timeout(random.randint(4000,7000))
+            await wait_loading_end(page)
 
-            box = await card.bounding_box()
+            # 2️⃣ API 登录
+            print("🔐 API 登录")
+            login_res = await page.evaluate(f"""
+            async () => {{
+                const res = await fetch("{LOGIN_API}", {{
+                    method: "POST",
+                    headers: {{"Content-Type": "application/json"}},
+                    body: JSON.stringify({{
+                        "userName": "{username}",
+                        "password": "{password}",
+                        "verificationToken": null
+                    }})
+                }});
+                return await res.json();
+            }}
+            """)
+            token = login_res.get("token")
+            if not token:
+                result += f"❌ 登录失败: {login_res.get('message')}\n"
+                return result
+            result += "✅ 登录成功\n"
 
-            # 模拟鼠标移动到按钮
-            await page.mouse.move(
-                box["x"] + box["width"] / 2,
-                box["y"] + box["height"] / 2,
-                steps=25
-            )
+            # 3️⃣ 进入 dashboard
+            print("📊 进入 dashboard")
+            await page.goto(DASHBOARD_URL, timeout=60000)
+            await page.wait_for_load_state("networkidle")
+            await wait_loading_end(page)
 
-            await asyncio.sleep(random.uniform(1, 2))
+            # 4️⃣ 判断是否已签到
+            if await page.locator("text=今日已签到").count() > 0:
+                result += "ℹ 今日已签到，无需再次操作\n"
+                return result
 
-            await page.mouse.click(
-                box["x"] + box["width"] / 2,
-                box["y"] + box["height"] / 2
-            )
+            # 5️⃣ 点击签到卡片
+            print("🚀 点击签到卡片")
+            retries = 3
+            for i in range(retries):
+                try:
+                    await page.wait_for_selector('[data-checkin-card="default"]', state="attached", timeout=20000)
 
-            await asyncio.sleep(random.uniform(5, 8))
+                    async with page.expect_response(CHECKIN_API_PATTERN, timeout=15000) as response_info:
+                        await page.locator('[data-checkin-card="default"]').click(force=True)
 
-            result += "🎉 已尝试点击签到\n"
+                    response = await response_info.value
+                    data = await response.json()
 
-        except:
-            result += "⚠ 未找到签到按钮（可能已签到或被拦截）\n"
+                    if data.get("success"):
+                        amount = data.get("amount", 0)
+                        result += f"✅ 签到成功，获得 {amount} RCoin\n"
+                        break
+                    else:
+                        result += f"⚠ 第{i+1}次失败: {data.get('message')}\n"
+                    await page.wait_for_timeout(3000)
 
-    except Exception as e:
-        result += f"❌ 异常: {e}\n"
-        await page.screenshot(path=f"{username}_error.png")
+                except Exception as e:
+                    result += f"⚠ 第{i+1}次异常: {e}\n"
+                    await page.wait_for_timeout(3000)
 
-    await context.close()
+        except Exception as e:
+            result += f"❌ 异常: {e}\n"
+            await page.screenshot(path=f"{username}_error.png")
+            print(f"📸 已保存截图 {username}_error.png")
+
+        await browser.close()
+
+
     return result
-
 
 async def main():
     if not ACCOUNTS:
         print("❌ 未配置 OKEMBY_ACCOUNT")
         return
 
-    final_msg = "📢 OKEmby GitHub 强化拟人签到\n"
+    final_msg = "📢 OKEmby 自动签到结果\n"
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(
-            headless=True,
-            args=[
-                "--disable-blink-features=AutomationControlled",
-                "--no-sandbox",
-                "--disable-dev-shm-usage"
-
-            ]
-        )
-
-        accounts = ACCOUNTS.split("&")
-
-        for i, acc in enumerate(accounts):
+    for acc in ACCOUNTS.split("&"):
+        try:
             username, password = acc.split("#")
-
-            if i > 0:
-                delay = random.randint(30, 90)
-                print(f"⏳ 等待 {delay} 秒避免风控...")
-                await asyncio.sleep(delay)
-
-            res = await run_account(browser, username, password)
-            final_msg += res
-
-        await browser.close()
+        except:
+            final_msg += f"⚠ 格式错误: {acc}\n"
+            continue
+        res = await run_account(username, password)
+        final_msg += res
 
     print(final_msg)
     send_tg(final_msg)
