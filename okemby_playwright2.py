@@ -9,8 +9,8 @@ BASE = "https://www.okemby.com"
 LOGIN_API = f"{BASE}/api/auth/login"
 TRANSFER_API = f"{BASE}/api/redpacket"
 
+# 使用 OKEMBY_ACCOUNTS2
 ACCOUNTS = os.getenv("OKEMBY_ACCOUNTS2")
-
 TG_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 
@@ -122,12 +122,18 @@ async def main():
 
     account_infos = []
 
-    # 登录所有账号
+    # 1️⃣ 登录所有账号
     for acc in acc_list:
-        username, password = acc.split("#")
+        try:
+            username, password = acc.split("#")
+        except:
+            log(f"⚠ 格式错误: {acc}")
+            continue
+
         try:
             token, balance, cookie_str, user_id = await login(username, password)
-            log(f"✅ {username} ID:{user_id} 余额:{balance}")
+            log(f"✅ {username} ({user_id}) 余额: {balance}")
+
             account_infos.append({
                 "username": username,
                 "password": password,
@@ -141,7 +147,7 @@ async def main():
 
     log("\n🚀 开始链式转账\n")
 
-    # 链式转账
+    # 2️⃣ 链式转账：1→2→3→...→最后
     for i in range(len(account_infos) - 1):
 
         sender = account_infos[i]
@@ -162,16 +168,29 @@ async def main():
             )
 
             if result.get("success") or result.get("message") == "发送成功":
-                log("✅ 成功\n")
+                log("✅ 转账成功\n")
             else:
-                log(f"⚠ 失败: {result.get('message')}\n")
+                log(f"⚠ 转账失败: {result.get('message')}\n")
 
         except:
-            log("⚠ 转账异常，继续下一笔\n")
+            log("⚠ 转账异常，继续\n")
 
         await asyncio.sleep(random.randint(5, 10))
 
-    log("\n🎯 链式转账完成")
+    # 3️⃣ 最终余额检查
+    log("\n🔎 最终账号余额检查\n")
+
+    for info in account_infos:
+        try:
+            token, balance, cookie_str, user_id = await login(
+                info["username"],
+                info["password"]
+            )
+            log(f"{info['username']} ({user_id}) 余额: {balance}")
+        except:
+            log(f"{info['username']} 查询失败")
+
+    log("\n🎯 执行完成")
     send_tg("\n".join(LOG))
 
 if __name__ == "__main__":
