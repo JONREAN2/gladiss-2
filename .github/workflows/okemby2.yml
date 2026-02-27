@@ -30,4 +30,4 @@ jobs:
           playwright install chromium
 
       - name: Run Script
-        run: python okemby_playwright.py
+        run: python okemby_playwright2.py
