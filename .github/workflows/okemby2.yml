@@ -3,31 +3,31 @@ name: OKEmby Auto Transfer
 on:
   workflow_dispatch:
   schedule:
-    - cron: '0 3 * * *'   # 每天 UTC 03:00 运行（自行修改）
+    - cron: '0 3 * * *'
 
 jobs:
   run:
     runs-on: ubuntu-latest
 
     env:
-      OKEMBY_ACCOUNTS: ${{ secrets.OKEMBY_ACCOUNTS2 }}
+      OKEMBY_ACCOUNTS2: ${{ secrets.OKEMBY_ACCOUNTS2 }}
       TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
       TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
 
     steps:
-      - name: 📥 Checkout
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: 🐍 Setup Python
+      - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      - name: 📦 Install dependencies
+      - name: Install dependencies
         run: |
           pip install --upgrade pip
           pip install playwright requests
           playwright install chromium
 
-      - name: 🚀 Run Script
-        run: python okemby_playwright2.py
+      - name: Run Script
+        run: python okemby_playwright.py
