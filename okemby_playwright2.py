@@ -14,9 +14,6 @@ ACCOUNTS = os.getenv("OKEMBY_ACCOUNTS2")
 TG_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
 
-TARGET_USERNAME = "jonrean"
-TARGET_USER_ID = None
-
 LOG = []
 
 def log(msg):
@@ -72,7 +69,7 @@ async def login(username, password):
 
 async def transfer(token, cookie_str, balance, to_id):
     if balance <= 0.01:
-        return {"success": False}
+        return {"success": False, "message": "余额不足"}
 
     amount = round(balance - 0.01, 2)
 
@@ -109,8 +106,6 @@ async def transfer(token, cookie_str, balance, to_id):
         return result
 
 async def main():
-    global TARGET_USER_ID
-
     if not ACCOUNTS:
         log("❌ 未设置 OKEMBY_ACCOUNTS2")
         send_tg("\n".join(LOG))
@@ -123,16 +118,16 @@ async def main():
         send_tg("\n".join(LOG))
         return
 
-    log(f"🔍 检测到账户数量: {len(acc_list)}\n")
+    log(f"🔍 账号数量: {len(acc_list)}\n")
 
     account_infos = []
 
+    # 登录所有账号
     for acc in acc_list:
         username, password = acc.split("#")
         try:
             token, balance, cookie_str, user_id = await login(username, password)
             log(f"✅ {username} ID:{user_id} 余额:{balance}")
-
             account_infos.append({
                 "username": username,
                 "password": password,
@@ -141,45 +136,42 @@ async def main():
                 "cookie": cookie_str,
                 "user_id": user_id
             })
-
-            if username == TARGET_USERNAME:
-                TARGET_USER_ID = user_id
-
         except:
             log(f"❌ {username} 登录失败")
 
-    if not TARGET_USER_ID:
-        log("⛔ 未找到 jonrean 账号")
-        send_tg("\n".join(LOG))
-        return
+    log("\n🚀 开始链式转账\n")
 
-    log("\n🚀 开始归集\n")
+    # 链式转账
+    for i in range(len(account_infos) - 1):
 
-    for info in account_infos:
+        sender = account_infos[i]
+        receiver = account_infos[i + 1]
 
-        if info["username"] == TARGET_USERNAME:
+        if sender["balance"] <= 0.01:
+            log(f"⚠ {sender['username']} 余额不足，跳过")
             continue
 
-        if info["balance"] <= 0.01:
-            continue
+        log(f"💰 {sender['username']} ➜ {receiver['username']}")
 
-        log(f"💰 {info['username']} → jonrean")
+        try:
+            result = await transfer(
+                sender["token"],
+                sender["cookie"],
+                sender["balance"],
+                receiver["user_id"]
+            )
 
-        result = await transfer(
-            info["token"],
-            info["cookie"],
-            info["balance"],
-            TARGET_USER_ID
-        )
+            if result.get("success") or result.get("message") == "发送成功":
+                log("✅ 成功\n")
+            else:
+                log(f"⚠ 失败: {result.get('message')}\n")
 
-        if result.get("success") or result.get("message") == "发送成功":
-            log("✅ 成功")
-        else:
-            log("⚠ 失败")
+        except:
+            log("⚠ 转账异常，继续下一笔\n")
 
         await asyncio.sleep(random.randint(5, 10))
 
-    log("\n🎯 完成")
+    log("\n🎯 链式转账完成")
     send_tg("\n".join(LOG))
 
 if __name__ == "__main__":
