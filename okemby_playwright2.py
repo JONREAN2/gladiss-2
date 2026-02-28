@@ -3,13 +3,13 @@ import asyncio
 import os
 import random
 import requests
+import json
 from playwright.async_api import async_playwright
 
 BASE = "https://www.okemby.com"
 LOGIN_API = f"{BASE}/api/auth/login"
 TRANSFER_API = f"{BASE}/api/redpacket"
 
-# 使用 OKEMBY_ACCOUNTS2
 ACCOUNTS = os.getenv("OKEMBY_ACCOUNTS2")
 TG_TOKEN = os.getenv("TG_BOT_TOKEN")
 TG_CHAT_ID = os.getenv("TG_CHAT_ID")
@@ -32,166 +32,140 @@ def send_tg(msg):
     except:
         pass
 
-async def login(username, password):
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context()
-        page = await context.new_page()
 
-        await page.goto(BASE, timeout=60000)
-        await page.wait_for_timeout(random.randint(3, 6) * 1000)
-
-        result = await page.evaluate(f"""
-        async () => {{
-            const r = await fetch("{LOGIN_API}", {{
+async def login(page, username, password):
+    result = await page.evaluate(
+        """async ({LOGIN_API, username, password}) => {
+            const r = await fetch(LOGIN_API, {
                 method: "POST",
-                headers: {{ "Content-Type": "application/json" }},
-                body: JSON.stringify({{
-                    userName: "{username}",
-                    password: "{password}",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    userName: username,
+                    password: password,
                     verificationToken: null
-                }})
-            }});
+                })
+            });
             return await r.json();
-        }}
-        """)
+        }""",
+        {"LOGIN_API": LOGIN_API, "username": username, "password": password}
+    )
 
-        token = result.get("token")
-        user = result.get("user", {})
-        balance = float(user.get("rCoin", 0))
-        user_id = user.get("id")
+    token = result.get("token")
+    user = result.get("user", {})
+    balance = float(user.get("rCoin", 0))
+    user_id = user.get("id")
 
-        cookies = await context.cookies()
-        cookie_str = "; ".join([f"{c['name']}={c['value']}" for c in cookies])
+    return token, balance, user_id
 
-        await browser.close()
-        return token, balance, cookie_str, user_id
 
-async def transfer(token, cookie_str, balance, to_id):
-    if balance <= 0.01:
-        return {"success": False, "message": "余额不足"}
-
-    amount = round(balance - 0.01, 2)
-
+async def transfer(page, token, amount, to_id):
     headers = {
         "Content-Type": "application/json",
-        "Authorization": f"Bearer {token}",
-        "Cookie": cookie_str
+        "Authorization": f"Bearer {token}"
     }
 
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True)
-        context = await browser.new_context()
-        page = await context.new_page()
-
-        await page.goto(BASE)
-        await page.wait_for_timeout(2000)
-
-        result = await page.evaluate(f"""
-        async () => {{
-            const r = await fetch("{TRANSFER_API}", {{
+    result = await page.evaluate(
+        """async ({TRANSFER_API, headers, amount, to_id}) => {
+            const r = await fetch(TRANSFER_API, {
                 method: "POST",
-                headers: {headers},
-                body: JSON.stringify({{
+                headers: headers,
+                body: JSON.stringify({
                     type: "single",
-                    totalAmount: {amount},
-                    recipientId: {to_id}
-                }})
-            }});
+                    totalAmount: amount,
+                    recipientId: to_id
+                })
+            });
             return await r.json();
-        }}
-        """)
+        }""",
+        {
+            "TRANSFER_API": TRANSFER_API,
+            "headers": headers,
+            "amount": amount,
+            "to_id": to_id
+        }
+    )
 
-        await browser.close()
-        return result
+    return result
+
 
 async def main():
     if not ACCOUNTS:
         log("❌ 未设置 OKEMBY_ACCOUNTS2")
-        send_tg("\n".join(LOG))
         return
 
     acc_list = ACCOUNTS.split("&")
 
     if len(acc_list) < 2:
         log("❌ 至少需要2个账号")
-        send_tg("\n".join(LOG))
         return
 
-    log(f"🔍 账号数量: {len(acc_list)}\n")
+    log(f"🔍 账号数量: {len(acc_list)}")
+    log("🚀 开始真正完全链式转账\n")
 
-    account_infos = []
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True)
+        context = await browser.new_context()
 
-    # 1️⃣ 登录所有账号
-    for acc in acc_list:
-        try:
-            username, password = acc.split("#")
-        except:
-            log(f"⚠ 格式错误: {acc}")
-            continue
+        for i in range(len(acc_list) - 1):
 
-        try:
-            token, balance, cookie_str, user_id = await login(username, password)
-            log(f"✅ {username} ({user_id}) 余额: {balance}")
+            sender_user, sender_pass = acc_list[i].split("#")
+            receiver_user, receiver_pass = acc_list[i + 1].split("#")
 
-            account_infos.append({
-                "username": username,
-                "password": password,
-                "token": token,
-                "balance": balance,
-                "cookie": cookie_str,
-                "user_id": user_id
-            })
-        except:
-            log(f"❌ {username} 登录失败")
+            page = await context.new_page()
+            await page.goto(BASE)
+            await page.wait_for_timeout(random.randint(2000,4000))
 
-    log("\n🚀 开始链式转账\n")
+            # 1️⃣ 登录发送方
+            token, balance, user_id = await login(page, sender_user, sender_pass)
 
-    # 2️⃣ 链式转账：1→2→3→...→最后
-    for i in range(len(account_infos) - 1):
+            if not token:
+                log(f"❌ {sender_user} 登录失败")
+                await page.close()
+                continue
 
-        sender = account_infos[i]
-        receiver = account_infos[i + 1]
+            log(f"💰 {sender_user} 余额 {balance}")
 
-        if sender["balance"] <= 0.01:
-            log(f"⚠ {sender['username']} 余额不足，跳过")
-            continue
+            if balance <= 0.01:
+                log(f"⚠ {sender_user} 余额不足，跳过\n")
+                await page.close()
+                continue
 
-        log(f"💰 {sender['username']} ➜ {receiver['username']}")
+            # 2️⃣ 获取接收方ID
+            token2, _, receiver_id = await login(page, receiver_user, receiver_pass)
 
-        try:
-            result = await transfer(
-                sender["token"],
-                sender["cookie"],
-                sender["balance"],
-                receiver["user_id"]
-            )
+            if not receiver_id:
+                log(f"❌ 无法获取 {receiver_user} ID")
+                await page.close()
+                continue
+
+            amount = round(balance - 0.01, 2)
+
+            log(f"➡ 转账 {amount} 给 {receiver_user}")
+
+            # 3️⃣ 执行转账
+            result = await transfer(page, token, amount, receiver_id)
 
             if result.get("success") or result.get("message") == "发送成功":
-                log("✅ 转账成功\n")
+                log("✅ 转账成功")
+
+                # 4️⃣ 再次确认余额
+                token3, new_balance, _ = await login(page, sender_user, sender_pass)
+
+                if abs(new_balance - 0.01) < 0.02:
+                    log("✔ 余额确认只剩 0.01\n")
+                else:
+                    log(f"⚠ 异常余额: {new_balance}\n")
             else:
-                log(f"⚠ 转账失败: {result.get('message')}\n")
+                log(f"❌ 转账失败: {result.get('message')}\n")
 
-        except:
-            log("⚠ 转账异常，继续\n")
+            await page.close()
+            await asyncio.sleep(random.randint(5,10))
 
-        await asyncio.sleep(random.randint(5, 10))
+        await browser.close()
 
-    # 3️⃣ 最终余额检查
-    log("\n🔎 最终账号余额检查\n")
-
-    for info in account_infos:
-        try:
-            token, balance, cookie_str, user_id = await login(
-                info["username"],
-                info["password"]
-            )
-            log(f"{info['username']} ({user_id}) 余额: {balance}")
-        except:
-            log(f"{info['username']} 查询失败")
-
-    log("\n🎯 执行完成")
+    log("🎯 链式执行完成")
     send_tg("\n".join(LOG))
+
 
 if __name__ == "__main__":
     asyncio.run(main())
